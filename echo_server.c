@@ -9,7 +9,8 @@
 #include <unistd.h>
 
 #define BUFFER_SIZE 50
-#define on_error(...) { fprintf(stderr, __VA_ARGS__); fflush(stderr); exit(1); }
+#define LISTEN_BACKLOG 8
+
 // get sockaddr, IPv4 or IPv6:
 void *get_in_addr(struct sockaddr *sa) {
 	if (sa->sa_family == AF_INET) {
@@ -19,58 +20,96 @@ void *get_in_addr(struct sockaddr *sa) {
 	return &(((struct sockaddr_in6*)sa)->sin6_addr);
 }
 
-int main (int argc, char *argv[]) {
-	struct sockaddr_storage their_addr;
-  char s[INET6_ADDRSTRLEN];
-  if (argc < 2) on_error("Usage: %s [port]\n", argv[0]);
-
-  int port = atoi(argv[1]);
-
-  int server_fd, client_fd, err;
-  struct sockaddr_in server, client;
-  char buf[BUFFER_SIZE];
+int bind_server_socket(int port) {
+  int server_fd, err;
+  struct sockaddr_in server;
 
   server_fd = socket(AF_INET, SOCK_STREAM, 0);
-  if (server_fd < 0) on_error("Could not create socket\n");
+  if (server_fd < 0) {
+    return server_fd;
+  }
 
   server.sin_family = AF_INET;
   server.sin_port = htons(port);
   server.sin_addr.s_addr = htonl(INADDR_ANY);
 
-  int opt_val = 1;
-  // setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt_val, sizeof opt_val);
-
   err = bind(server_fd, (struct sockaddr *) &server, sizeof(server));
-  if (err < 0) on_error("Could not bind socket\n");
+  if (err < 0) {
+    close(server_fd);
+    return err;
+  }
 
-  err = listen(server_fd, 128);
-  if (err < 0) on_error("Could not listen on socket\n");
+  return server_fd;
+}
 
-  printf("Server is listening on %d\n", port);
+int main (int argc, char *argv[]) {
+  if (argc < 2) {
+    fprintf(stderr, "Usage: %s <port>\n", argv[0]);
+    fflush(stderr);
+    return EXIT_FAILURE;
+  }
+
+  int port = atoi(argv[1]);
+
+  int server_fd, err;
+  char net_address[INET6_ADDRSTRLEN];
+  char network_buffer[BUFFER_SIZE];
+  struct sockaddr_in server, client;
+
+  server_fd = bind_server_socket(port);
+  if (server_fd < 0) {
+    perror("Unable to bind to socket");
+    exit(EXIT_FAILURE);
+  }
+
+  err = listen(server_fd, LISTEN_BACKLOG);
+  if (err < 0) {
+    perror("Unable to bind to socket");
+    exit(EXIT_FAILURE);
+  }
+
+  printf("server: listening on port %d\n", port);
 
   while (1) {
     socklen_t client_len = sizeof(client);
-    client_fd = accept(server_fd, (struct sockaddr *) &client, &client_len);
+    int client_fd = accept(server_fd, (struct sockaddr *) &client, &client_len);
 
-    if (client_fd < 0) on_error("Could not establish new connection\n");
+    if (client_fd < 0) {
+      perror("server: error establishing new connection");
+      continue;
+    }
 
-    inet_ntop(client.sin_family, get_in_addr((struct sockaddr *) &client), s, sizeof s);
-		printf("server: got connection from %s\n", s);
+    inet_ntop(client.sin_family, get_in_addr((struct sockaddr *) &client), net_address, sizeof net_address);
+		printf("server: new connection from %s\n", net_address);
 
-    do {
-      int read = recv(client_fd, buf, BUFFER_SIZE, 0);
-      printf("Read %d bytes\n", read);
+    while(1) {
+      int bytes_sent, bytes_recvd;
 
-      if (!read) break; // done reading
-      if (read < 0) on_error("Client read failed\n");
+      bytes_recvd = recv(client_fd, network_buffer, BUFFER_SIZE, 0);
 
-      err = send(client_fd, buf, read, 0);
-      if (err < 0) on_error("Client write failed\n");
-    } while(1);
+      printf("server: read %d bytes\n", bytes_recvd);
 
-    printf("Break!\n");
+      if (bytes_recvd == 0) {
+        // Connection closed in an orderly fashion, so break and wait to accept next connection
+        printf("server: connection closed from %s\n", net_address);
+        close(client_fd);
+        break;
+      }
+
+      if (bytes_recvd < 0) {
+        perror("server: error reading data from network");
+        close(client_fd);
+        break;
+      }
+
+      bytes_sent = send(client_fd, network_buffer, bytes_recvd, 0);
+      if (bytes_sent < 0) {
+        perror("server: error sending data over network");
+        close(client_fd);
+        break;
+      }
+    };
   }
 
-
-  return 0;
+  return EXIT_SUCCESS;
 }
