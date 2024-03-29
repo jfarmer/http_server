@@ -1,5 +1,5 @@
 BUILD_DIR := ./bin
-PROGRAMS := echo_server datetime_server showip hello
+PROGRAMS := echo_server_multi echo_server datetime_server showip hello
 
 all: mk_build_dir $(PROGRAMS)
 
