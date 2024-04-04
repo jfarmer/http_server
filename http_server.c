@@ -68,7 +68,7 @@ void *get_in_addr(struct sockaddr *sa) {
   return &(((struct sockaddr_in6 *)sa)->sin6_addr);
 }
 
-void http_header_print(HTTPHeader *header) {
+void http_header_print(const HTTPHeader *header) {
   printf("Name:    %s\n", header->name);
   printf("Value:   %s\n", header->value);
 }
@@ -92,7 +92,7 @@ HTTPHeader *http_header_new(char *name, char *value) {
   return header;
 }
 
-void http_request_line_print(HTTPRequestLine *request_line) {
+void http_request_line_print(const HTTPRequestLine *request_line) {
   printf("Method:  %s\n", request_line->method);
   printf("URI:     %s\n", request_line->uri);
   printf("Version: %s\n", request_line->version);
