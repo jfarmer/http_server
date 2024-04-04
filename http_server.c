@@ -33,13 +33,6 @@ void handler_sigchld(int s) {
   errno = saved_errno;
 }
 
-void handler_exit() {
-  regfree(&REGEX_T_REQUEST_LINE);
-  regfree(&REGEX_T_HEADER);
-
-  printf("Shutting down...\n");
-}
-
 void setup_signal_handlers() {
   struct sigaction sigchild_action;
 
@@ -127,16 +120,9 @@ HTTPRequestLine *http_request_line_new(char *method, char *uri, char *version) {
 }
 
 HTTPRequestLine *http_parse_request_line(char *request, int *offset) {
-  HTTPRequestLine *request_line = malloc(sizeof(HTTPRequestLine));
-  if (!request_line) {
-    perror("Failed to allocate memory for HTTPRequestLine");
-    return NULL;
-  }
-
   regmatch_t matches[4];
 
   if (regexec(&REGEX_T_REQUEST_LINE, request + *offset, 4, matches, 0) != 0) {
-    free(request_line);
     return NULL;
   }
 
@@ -150,18 +136,10 @@ HTTPRequestLine *http_parse_request_line(char *request, int *offset) {
 }
 
 HTTPHeader *http_parse_header(char *request, int *offset) {
-  HTTPHeader *header = malloc(sizeof(HTTPHeader));
   char *offset_request = request + *offset;
-
-  if (!header) {
-    perror("Failed to allocate memory for HTTPHeader");
-    return NULL;
-  }
-
   regmatch_t matches[3];
 
   if (regexec(&REGEX_T_HEADER, offset_request, 3, matches, 0) != 0) {
-    free(header);
     return NULL;
   }
 
@@ -260,10 +238,6 @@ int main(int argc, char *argv[]) {
 
   setup_signal_handlers();
   setup_regex();
-  if (atexit(handler_exit) < 0) {
-    perror("Error setting up exit handler");
-    exit(EXIT_FAILURE);
-  }
 
   server_fd = bind_server_socket(port);
   if (server_fd < 0) {
