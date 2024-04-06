@@ -22,6 +22,14 @@ typedef struct _HTTPRequest {
   HTTPEntityBody *body;
 } HTTPRequest;
 
+void http_header_print(const HTTPHeader *header);
+void http_header_free(HTTPHeader *header);
+HTTPHeader *http_header_new(char *name, char *value);
+
+void http_request_line_print(const HTTPRequestLine *request_line);
+void http_request_line_free(HTTPRequestLine *request_line);
+HTTPRequestLine *http_request_line_new(char *method, char *uri, char *version);
+
 #define REGEX_REQUEST_LINE "^(GET|HEAD|POST) (/.*) HTTP/([0-9]+\\.[0-9]+)" CRLF
 #define REGEX_HEADER       "^([^:]+): (.*?)" CRLF
 
