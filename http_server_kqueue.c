@@ -1,8 +1,9 @@
+#include <errno.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <signal.h>
+#include <sys/event.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -21,7 +22,7 @@ regex_t REGEX_T_HEADER;
 
 #define CRLF "\r\n"
 #define CRLFCRLF "\r\n\r\n"
-#define BUFFER_SIZE 8*1024 // 8 kB
+#define BUFFER_SIZE 8 * 1024 // 8 kB
 #define LISTEN_BACKLOG 256
 
 void handler_sigchld(int s) {
@@ -48,12 +49,14 @@ void setup_signal_handlers() {
 }
 
 void setup_regex() {
-  if (regcomp(&REGEX_T_REQUEST_LINE, REGEX_REQUEST_LINE, REG_EXTENDED | REG_ENHANCED) != 0) {
+  if (regcomp(&REGEX_T_REQUEST_LINE, REGEX_REQUEST_LINE,
+              REG_EXTENDED | REG_ENHANCED) != 0) {
     perror("Failed to compile REGEX_REQUEST_LINE");
     exit(EXIT_FAILURE);
   }
 
-  if (regcomp(&REGEX_T_HEADER, REGEX_HEADER, REG_EXTENDED | REG_ENHANCED) != 0) {
+  if (regcomp(&REGEX_T_HEADER, REGEX_HEADER, REG_EXTENDED | REG_ENHANCED) !=
+      0) {
     perror("Failed to compile REGEX_HEADER");
     exit(EXIT_FAILURE);
   }
@@ -100,7 +103,8 @@ HTTPRequestLine *http_parse_request_line(char *request, int *offset) {
 
   // regmatch_t matches[4];
 
-  // if (regexec(&REGEX_T_REQUEST_LINE, request + *offset, 4, matches, 0) != 0) {
+  // if (regexec(&REGEX_T_REQUEST_LINE, request + *offset, 4, matches, 0) != 0)
+  // {
   //   return NULL;
   // }
 
@@ -145,14 +149,14 @@ HTTPHeader *http_parse_header(char *request, int *offset) {
   *offset += offset2;
 
   return http_header_new(
-    strndup(offset_request, header_delim_loc - offset_request),
-    strndup(header_delim_loc + 2, header_crlf_loc - (header_delim_loc + 2))
-  );
+      strndup(offset_request, header_delim_loc - offset_request),
+      strndup(header_delim_loc + 2, header_crlf_loc - (header_delim_loc + 2)));
   // *offset += matches[0].rm_eo;
 
   // return http_header_new(
-  //   strndup(offset_request + matches[1].rm_so, matches[1].rm_eo - matches[1].rm_so),
-  //   strndup(offset_request + matches[2].rm_so, matches[2].rm_eo - matches[2].rm_so)
+  //   strndup(offset_request + matches[1].rm_so, matches[1].rm_eo -
+  //   matches[1].rm_so), strndup(offset_request + matches[2].rm_so,
+  //   matches[2].rm_eo - matches[2].rm_so)
   // );
 }
 
@@ -212,16 +216,18 @@ int handle_http_request(int client_fd, void *buffer, size_t buffer_length) {
     // printf("All done w/ headers!\n");
 
     const char body[] = "Hello, World!";
-    const char response[] = "HTTP/1.0 200 OK" CRLF "Content-Length: %d" CRLF CRLF "%s";
+    const char response[] =
+        "HTTP/1.0 200 OK" CRLF "Content-Length: %d" CRLF CRLF "%s";
 
     int content_length = strlen(body);
     int digits_in_content_length = snprintf(NULL, 0, "%d", content_length);
-    int full_response_length = strlen(response) + digits_in_content_length + content_length + 1;
+    int full_response_length =
+        strlen(response) + digits_in_content_length + content_length + 1;
 
     char *full_response = calloc(full_response_length, sizeof(char));
 
-
-    int response_length = snprintf(full_response, full_response_length, response, content_length, body);
+    int response_length = snprintf(full_response, full_response_length,
+                                   response, content_length, body);
 
     bytes_sent = send(client_fd, full_response, response_length, 0);
     if (bytes_sent < 0) {
@@ -232,6 +238,10 @@ int handle_http_request(int client_fd, void *buffer, size_t buffer_length) {
   }
 
   return 0;
+}
+
+void handle_client_disconnect(int client_fd) {
+  close(client_fd);
 }
 
 int main(int argc, char *argv[]) {
@@ -245,7 +255,9 @@ int main(int argc, char *argv[]) {
 
   int server_fd, err;
   char net_address[INET6_ADDRSTRLEN];
-  char network_buffer[BUFFER_SIZE];
+
+  int kq;
+  struct kevent change_event[4], event[4];
 
   setup_signal_handlers();
   setup_regex();
@@ -263,54 +275,64 @@ int main(int argc, char *argv[]) {
   }
 
   printf("server: listening on port %d\n", port);
+  kq = kqueue();
+  EV_SET(change_event, server_fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, 0);
+
+  if (kevent(kq, change_event, 1, event, 0, NULL) == -1) {
+    perror("kevent");
+    exit(EXIT_FAILURE);
+  }
 
   while (1) {
     struct sockaddr_in client;
     socklen_t client_len = sizeof(client);
 
-    int client_fd = accept(server_fd, (struct sockaddr *)&client, &client_len);
+    int new_events = kevent(kq, NULL, 0, event, 4, NULL);
 
-    if (client_fd < 0) {
-      perror("server: error establishing new connection");
-      continue;
-    }
-
-    // inet_ntop(client.sin_family, get_in_addr((struct sockaddr *)&client),
-    //           net_address, sizeof net_address);
-    // printf("server: new connection from %s\n", net_address);
-
-    // fork() clones the current process
-    // it returns 0 to the child process and the process ID of the child to the
-    // parent process
-    pid_t pid = fork();
-    // pid_t pid = 0;
-    if (pid < 0) {
-      // error forking
-      perror("server: error forking server process");
+    if (new_events < 0) {
+      perror("kevent");
       exit(EXIT_FAILURE);
     }
 
-    if (pid > 0) {
-      // we are in the parent process, but only child needs client_fd
+    printf("new events: %d\n", new_events);
 
-      // do nothing else and go back to waiting for next connection
-      close(client_fd);
-    } else {
-      // we are in the child process, but only parent needs server_fd
-      close(server_fd);
+    for (int i = 0; i < new_events; i++) {
+      int event_fd = event[i].ident;
 
-      err = handle_http_request(client_fd, network_buffer, BUFFER_SIZE);
-      if (err < 0) {
-        perror("server: client error");
-        exit(EXIT_FAILURE);
+      if (event[i].flags & EV_EOF) {
+        // printf("server: client disconnected\n");
+        handle_client_disconnect(event_fd);
+      } else if (event_fd == server_fd) {
+        // printf("server: client connected\n");
+        int client_fd =
+            accept(server_fd, (struct sockaddr *)&client, &client_len);
+
+        if (client_fd < 0) {
+          perror("server: error establishing new connection");
+        }
+
+        // inet_ntop(client.sin_family, get_in_addr((struct sockaddr *)&client),
+        //           net_address, sizeof net_address);
+        // printf("server: new connection from %s\n", net_address);
+
+        EV_SET(change_event, client_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+
+        if (kevent(kq, change_event, 1, NULL, 0, NULL) < 0) {
+          perror("kevent error");
+        }
+      } else if (event[i].filter & EVFILT_READ) {
+        char network_buffer[BUFFER_SIZE];
+
+        err = handle_http_request(event_fd, network_buffer, BUFFER_SIZE);
+        if (err < 0) {
+          perror("server: client error");
+          exit(EXIT_FAILURE);
+        }
+
+        close(event_fd);
+      } else {
+        printf("Unknown event\n");
       }
-
-      close(client_fd);
-
-      // printf("server: connection closed from %s\n", net_address);
-
-      // exit() here exits from the child process
-      exit(EXIT_SUCCESS);
     }
   }
 
